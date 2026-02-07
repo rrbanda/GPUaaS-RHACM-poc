@@ -9,27 +9,44 @@
 
 **Date Delivered:** \<Date\>
 
-**Version:** 1.0
+**Version:** 1.1
+
+---
+
+## Executive Summary
+
+This Proof of Concept demonstrates **GPU-as-a-Service** across a fleet of OpenShift clusters using Red Hat Advanced Cluster Management (RHACM) and the Red Hat Build of Kueue (RHBoK) with MultiKueue:
+
+- **Single submission point:** Data scientists submit GPU jobs to one queue on the hub cluster. No knowledge of cluster topology or GPU availability is required.
+- **Label-based routing:** Managed clusters are labeled with their GPU hardware type. RHACM Placement dynamically selects only matching clusters — no hardcoded targets.
+- **Fully automated plumbing:** The RHACM Kueue Addon deploys Kueue to spoke clusters, generates MultiKueue configuration from Placement decisions, and keeps everything in sync as the fleet changes.
+- **Dynamic adaptation:** Adding or removing GPU labels on clusters automatically updates the routing configuration. No manual MultiKueueConfig editing is required.
+- **Clear separation of concerns:** Platform administrators manage Placements and labels. Data scientists submit to a queue. Everything else is automated.
+
+> **Support Status:** The Kueue Addon for RHACM premiered as **Developer Preview in RHACM 2.15**. Please review the [Scope of Support for Developer Preview](https://access.redhat.com/support/offerings/devpreview) and check with Red Hat for the most recent support offering before using in production.
 
 ---
 
 ## Table of Contents
 
 - [1. PoC Objective](#1-poc-objective)
-- [2. Business Context — The Challenge](#2-business-context--the-challenge)
-- [3. Solution Overview](#3-solution-overview)
-- [4. Scope of PoC](#4-scope-of-poc)
-- [5. Success Criteria](#5-success-criteria)
-- [6. Demo Environment](#6-demo-environment)
-- [7. Architecture Deep Dive](#7-architecture-deep-dive)
-- [8. Step-by-Step Execution Guide](#8-step-by-step-execution-guide)
-- [9. Roles and Responsibilities](#9-roles-and-responsibilities)
-- [10. Timeline](#10-timeline)
-- [11. Assumptions and Prerequisites](#11-assumptions-and-prerequisites)
-- [12. Future Extensions (Beyond This PoC)](#12-future-extensions-beyond-this-poc)
-- [13. Reference Links](#13-reference-links)
-- [14. Next Steps](#14-next-steps)
-- [15. Confidentiality / Copyright / Account Team](#15-confidentiality--copyright--account-team)
+- [2. Business Context](#2-business-context)
+- [3. Key Terminology](#3-key-terminology)
+- [4. Kueue Fundamentals](#4-kueue-fundamentals)
+- [5. Solution Overview](#5-solution-overview)
+- [6. Architecture Deep Dive](#6-architecture-deep-dive)
+- [7. Scope of PoC](#7-scope-of-poc)
+- [8. Success Criteria](#8-success-criteria)
+- [9. Demo Environment](#9-demo-environment)
+- [10. Step-by-Step Execution Guide](#10-step-by-step-execution-guide)
+- [11. Troubleshooting](#11-troubleshooting)
+- [12. Roles and Responsibilities](#12-roles-and-responsibilities)
+- [13. Timeline](#13-timeline)
+- [14. Assumptions and Prerequisites](#14-assumptions-and-prerequisites)
+- [15. Future Extensions (Beyond This PoC)](#15-future-extensions-beyond-this-poc)
+- [16. Reference Links](#16-reference-links)
+- [17. Next Steps](#17-next-steps)
+- [18. Confidentiality / Copyright / Account Team](#18-confidentiality--copyright--account-team)
 
 ---
 
@@ -39,11 +56,18 @@ This Proof of Concept (PoC) demonstrates the capability of **Red Hat Advanced Cl
 
 The core scenario demonstrated is **Label-Based Multi-Cluster GPU Scheduling**: managed clusters are labeled with their GPU hardware type (e.g., `accelerator=nvidia-tesla-t4`), and the system dynamically routes GPU jobs only to clusters that match the required hardware.
 
-> **Note:** The Kueue Addon for RHACM premiered as **Developer Preview in RHACM 2.15**. Please review the [Scope of Support for Developer Preview](https://access.redhat.com/support/offerings/devpreview) and check with Red Hat for the most recent support offering before using in production.
+### Personas Involved
+
+This PoC addresses two distinct personas, aligned with the [Red Hat Build of Kueue persona model](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue):
+
+| Persona | Kueue Role | PoC Responsibility |
+|---------|------------|-------------------|
+| **Platform Administrator** | Batch Administrator | Creates Placements, labels clusters, manages ClusterQueues and quotas |
+| **Data Scientist** | Batch User | Submits jobs to a LocalQueue — no infrastructure knowledge required |
 
 ---
 
-## 2. Business Context — The Challenge
+## 2. Business Context
 
 ### The Growth of AI/ML Workloads
 
@@ -96,7 +120,123 @@ Kueue excels at scheduling batch workloads within a single cluster. However, in 
 
 ---
 
-## 3. Solution Overview
+## 3. Key Terminology
+
+Before diving into the solution architecture, it is important to understand the key terms used throughout this document. These terms span three domains: Kueue (job scheduling), RHACM (multi-cluster management), and MultiKueue (multi-cluster job dispatch).
+
+### Kueue Resources
+
+| Term | Definition |
+|------|-----------|
+| **ResourceFlavor** | A cluster-scoped resource that maps to a set of node labels and taints, representing a type of hardware. For example, a flavor might represent nodes with NVIDIA Tesla T4 GPUs. |
+| **ClusterQueue** | A cluster-scoped resource that governs a pool of resources (CPU, memory, GPU) with defined quotas, scheduling policies, and admission controls. Created by batch administrators. |
+| **LocalQueue** | A namespace-scoped resource that serves as the entry point for users to submit workloads. Each LocalQueue points to a ClusterQueue. |
+| **Workload** | Kueue's internal representation of a submitted job. Tracks the job's lifecycle through admission, scheduling, and completion. |
+| **AdmissionCheck** | A gate attached to a ClusterQueue that must be satisfied before a workload is admitted. Used to integrate external decision systems such as MultiKueue and RHACM Placement. |
+| **Cohort** | A group of ClusterQueues that can share (borrow) unused resources from each other, enabling flexible resource allocation across teams. |
+| **Preemption** | The ability to evict running workloads to free resources for higher-priority or quota-reclaiming workloads. |
+
+### RHACM Resources
+
+| Term | Definition |
+|------|-----------|
+| **ManagedCluster** | An OpenShift cluster that is registered with and managed by RHACM. |
+| **ManagedClusterSet** | A logical grouping of ManagedClusters for organizational and access control purposes. The `global` set includes all clusters. |
+| **Placement** | An RHACM resource that defines criteria (labels, scores, CEL expressions) for selecting which managed clusters should receive workloads. |
+| **PlacementDecision** | An RHACM-generated resource listing the clusters that satisfy a Placement's selection criteria. Updated automatically when cluster labels change. |
+| **Kueue Addon** | An RHACM addon (`multicluster-kueue-manager`) that automates Kueue deployment, configuration, and MultiKueue setup across managed clusters. |
+
+### MultiKueue Resources
+
+| Term | Definition |
+|------|-----------|
+| **MultiKueue** | A subproject of Kueue that extends job scheduling from a single cluster to multiple clusters, dispatching jobs from a hub to spoke clusters. |
+| **MultiKueueConfig** | A resource listing the remote clusters eligible to receive dispatched workloads. In this PoC, it is auto-generated from the PlacementDecision. |
+| **MultiKueueCluster** | A resource representing a remote cluster's connection status in the MultiKueue system. Created by the Kueue Addon for each managed cluster. |
+
+---
+
+## 4. Kueue Fundamentals
+
+This section provides the foundational Kueue concepts needed to understand the multi-cluster GPU scheduling solution. Readers already familiar with Kueue may skip to [Section 5: Solution Overview](#5-solution-overview).
+
+### The Kueue Resource Hierarchy
+
+Kueue organizes job scheduling through a layered resource hierarchy. Each layer serves a distinct purpose:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   ResourceFlavor                            │
+│   Defines hardware characteristics (node labels, taints)    │
+│   Example: nodes with nvidia.com/gpu.present=true           │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ referenced by
+┌──────────────────────────▼──────────────────────────────────┐
+│                    ClusterQueue                              │
+│   Cluster-scoped resource pool with:                        │
+│   • Resource quotas (CPU, memory, GPU)                      │
+│   • Scheduling policies                                     │
+│   • AdmissionChecks (gates for external decisions)          │
+│   Created by: Batch Administrators                          │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ referenced by
+┌──────────────────────────▼──────────────────────────────────┐
+│                     LocalQueue                               │
+│   Namespace-scoped entry point for users                    │
+│   Points to a specific ClusterQueue                         │
+│   Created by: Batch Administrators                          │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ jobs submitted to
+┌──────────────────────────▼──────────────────────────────────┐
+│                      Workload                                │
+│   Kueue's internal object representing a submitted job      │
+│   Tracks: Pending → Admitted → Running → Finished           │
+│   Created by: Kueue (automatically from user's Job)         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### How a Job Flows Through Kueue
+
+The lifecycle of a Kueue-managed job follows these steps:
+
+1. **Submission:** A user creates a Kubernetes Job (or PyTorchJob, RayJob, etc.) with `suspend: true` and a `kueue.x-k8s.io/queue-name` label pointing to a LocalQueue.
+2. **Workload creation:** Kueue detects the job and creates a corresponding `Workload` object to track it.
+3. **Admission:** Kueue evaluates the workload against the ClusterQueue's quotas and any configured AdmissionChecks. If all checks pass and quota is available, the workload is admitted.
+4. **Scheduling:** Upon admission, Kueue unsuspends the job and injects node affinity based on the ResourceFlavor. The Kubernetes scheduler assigns pods to nodes.
+5. **Completion:** The job runs to completion. Kueue updates the Workload status and releases the reserved quota.
+
+### Workload States
+
+| State | Description |
+|-------|-------------|
+| **Pending** | Job submitted but waiting for quota availability or AdmissionCheck approval |
+| **Admitted** | Job accepted — quota reserved and AdmissionChecks satisfied |
+| **Running** | Job actively executing on allocated resources |
+| **Finished** | Job completed successfully or failed |
+
+### Single-Cluster vs. Multi-Cluster Kueue
+
+| Capability | Single-Cluster Kueue | MultiKueue (This PoC) |
+|------------|----------------------|----------------------|
+| Job scheduling | Within one cluster | Across multiple clusters |
+| Resource visibility | Local cluster resources only | Fleet-wide resource pool |
+| Submission point | Per-cluster LocalQueue | Single hub LocalQueue |
+| Hardware selection | ResourceFlavor node labels | Placement label selectors + ResourceFlavors |
+| Configuration | Manual per cluster | Automated by Kueue Addon |
+
+### Namespace Management
+
+> **Important:** The Red Hat Build of Kueue Operator uses an opt-in mechanism for namespace management. You must label namespaces where you want Kueue to manage jobs:
+>
+> ```bash
+> oc label namespace <namespace> kueue.openshift.io/managed=true
+> ```
+>
+> Without this label, jobs in the namespace will not be subject to Kueue's admission control and quota management.
+
+---
+
+## 5. Solution Overview
 
 ### The Three Core Components
 
@@ -130,14 +270,22 @@ The GPU-as-a-Service solution is built on three integrated components:
 
 ### The Two AdmissionCheck Pattern
 
-Every MultiKueue setup with RHACM requires **exactly two AdmissionChecks** on the hub ClusterQueue:
+Every MultiKueue setup with RHACM requires **exactly two AdmissionChecks** on the hub ClusterQueue. Understanding this pattern is central to the entire solution:
+
+**AdmissionCheck #1 — The Bridge (OCM Placement Controller):**
+
+This check is controlled by `open-cluster-management.io/placement`. It watches the RHACM Placement, reads the resulting PlacementDecision, and **dynamically generates a `MultiKueueConfig`** listing only the clusters that match the Placement criteria. When cluster labels change, the PlacementDecision updates, and this controller regenerates the MultiKueueConfig automatically.
+
+**AdmissionCheck #2 — The Dispatcher (Kueue MultiKueue Controller):**
+
+This check is controlled by `kueue.x-k8s.io/multikueue`. It reads the MultiKueueConfig generated by AdmissionCheck #1 and **dispatches jobs to the listed spoke clusters**. It selects one of the eligible clusters and creates a mirror job there.
 
 | AdmissionCheck | Controller | Purpose |
 |----------------|------------|---------|
 | `multikueue-config-demo2` | `open-cluster-management.io/placement` | **Bridge:** Watches the Placement and dynamically generates a `MultiKueueConfig` from the PlacementDecision results |
 | `multikueue-demo2` | `kueue.x-k8s.io/multikueue` | **Dispatcher:** Reads the MultiKueueConfig and dispatches jobs to the listed clusters |
 
-The OCM controller is the **bridge** between RHACM Placement and Kueue MultiKueue — it converts cluster selection decisions into job routing configuration, automatically and dynamically.
+> **Key Insight:** The OCM controller is the **bridge** between RHACM Placement and Kueue MultiKueue — it converts cluster selection decisions into job routing configuration, automatically and dynamically.
 
 ### Architecture Overview
 
@@ -172,104 +320,7 @@ The power of this architecture is the **clear separation between administration 
 
 ---
 
-## 4. Scope of PoC
-
-### In Scope
-
-| Area | Details |
-|------|---------|
-| **Platform Setup** | RHACM hub cluster operational, Kueue Operator installed, Kueue Addon deployed |
-| **Cluster Configuration** | Managed clusters labeled with accelerator type |
-| **Placement & MultiKueue** | Label-based Placement created, MultiKueueConfig auto-generated |
-| **Job Routing** | GPU job submitted to hub, dispatched to GPU clusters only |
-| **Verification** | Full validation of resource status, job routing, dynamic behavior |
-| **Cleanup** | All PoC resources can be removed cleanly |
-
-### Out of Scope
-
-| Area | Notes |
-|------|-------|
-| **AI platform integration** | Integration with data science platforms is not configured in this PoC |
-| **Production workloads** | This PoC uses test images, not real AI training jobs |
-| **Real GPU training** | Fake GPU resources may be used for demonstration |
-| **Dynamic score-based scheduling** | Covered as a future extension (see [Section 12](#12-future-extensions-beyond-this-poc)) |
-| **CEL-based bin-packing** | Covered as a future extension (see [Section 12](#12-future-extensions-beyond-this-poc)) |
-| **Multi-team queue setup** | Multiple queues for different teams/tiers (see [Section 12](#12-future-extensions-beyond-this-poc)) |
-| **Network/security hardening** | Production networking and security policies |
-
----
-
-## 5. Success Criteria
-
-The PoC will be deemed successful if all the following criteria are met:
-
-### I. Platform Setup
-
-- [ ] RHACM hub cluster is operational with managed clusters registered
-- [ ] Kueue Operator is installed via OperatorHub on the hub cluster
-- [ ] Kueue Addon (`multicluster-kueue-manager`) is deployed and enabled
-- [ ] `MultiKueueCluster` resources show `CONNECTED=True` for managed clusters
-
-### II. Cluster Configuration
-
-- [ ] GPU-capable managed clusters are labeled with `accelerator=nvidia-tesla-t4`
-- [ ] (Optional) Fake GPU resources are provisioned on managed cluster nodes for testing
-- [ ] CPU-only clusters do **not** have the accelerator label
-
-### III. Placement and MultiKueue
-
-- [ ] `Placement` resource is created in `openshift-kueue-operator` namespace
-- [ ] `PlacementDecision` lists **only** GPU-labeled clusters (e.g., cluster2, cluster3)
-- [ ] `MultiKueueConfig` is **auto-generated** by the OCM controller with the correct cluster list
-- [ ] Both `AdmissionChecks` show `status=True`, `reason=Active`
-- [ ] `ClusterQueue` shows `status=True`, `reason=Ready`, `message="Can admit new workloads"`
-
-### IV. Job Routing
-
-- [ ] A GPU job is submitted to the hub cluster via `user-queue` LocalQueue
-- [ ] The job is dispatched to **only** one of the GPU-labeled clusters
-- [ ] The CPU-only cluster (cluster1) receives **no** workload
-- [ ] Workload on the spoke cluster shows `Admitted=True`
-
-### V. Dynamic Behavior
-
-- [ ] Removing the `accelerator` label from a cluster **automatically** removes it from the `MultiKueueConfig`
-- [ ] Adding the `accelerator` label to a new cluster **automatically** adds it to the `MultiKueueConfig`
-- [ ] No manual `MultiKueueConfig` editing is required at any point
-
----
-
-## 6. Demo Environment
-
-### Cluster Topology
-
-| Cluster | Role | Hardware | Labels | Kueue |
-|---------|------|----------|--------|-------|
-| **hub-cluster** | RHACM Hub + Kueue Manager | CPU | N/A | Kueue Operator + Addon installed |
-| **cluster1** | Managed Spoke | CPU only | *(none)* | Kueue synced by Addon |
-| **cluster2** | Managed Spoke | NVIDIA Tesla T4 × 3 | `accelerator=nvidia-tesla-t4` | Kueue synced by Addon |
-| **cluster3** | Managed Spoke | NVIDIA Tesla T4 × 3 | `accelerator=nvidia-tesla-t4` | Kueue synced by Addon |
-
-> **Note:** If you don't have physical GPUs, you can use the fake GPU setup described in [Step 2 of the Execution Guide](#step-2-optional-set-up-fake-gpu-resources).
-
-### Component Versions
-
-| Component | Version | Notes |
-|-----------|---------|-------|
-| **Red Hat Advanced Cluster Management** | 2.15+ | Developer Preview for Kueue Addon |
-| **OpenShift Container Platform** | 4.18 – 4.21 | Hub and spoke clusters |
-| **Red Hat Build of Kueue** | 1.2.x+ | Installed via OperatorHub |
-| **Kueue Addon** | Developer Preview | Managed by RHACM |
-
-### Network Requirements
-
-- Managed clusters must be able to reach the RHACM hub (standard RHACM requirement)
-- MultiKueue uses **cluster-proxy** — no direct hub-to-spoke network access required
-- All communication goes through the RHACM managed cluster registration agent
-
----
-
-## 7. Architecture Deep Dive
+## 6. Architecture Deep Dive
 
 ### Hub vs. Spoke Resources
 
@@ -353,9 +404,118 @@ Without the addon, setting up MultiKueue requires manual configuration of:
 
 ---
 
-## 8. Step-by-Step Execution Guide
+## 7. Scope of PoC
 
-This section walks through the PoC execution in order. Each step references a numbered manifest file in the [`poc/manifests/`](manifests/) directory.
+### In Scope
+
+| Area | Details |
+|------|---------|
+| **Platform Setup** | RHACM hub cluster operational, Kueue Operator installed, Kueue Addon deployed |
+| **Cluster Configuration** | Managed clusters labeled with accelerator type |
+| **Placement & MultiKueue** | Label-based Placement created, MultiKueueConfig auto-generated |
+| **Job Routing** | GPU job submitted to hub, dispatched to GPU clusters only |
+| **Verification** | Full validation of resource status, job routing, dynamic behavior |
+| **Cleanup** | All PoC resources can be removed cleanly |
+
+### Out of Scope
+
+| Area | Notes |
+|------|-------|
+| **Production workloads** | This PoC uses test images, not real AI training jobs |
+| **Real GPU training** | Fake GPU resources may be used for demonstration |
+| **Dynamic score-based scheduling** | Covered as a future extension (see [Section 15](#15-future-extensions-beyond-this-poc)) |
+| **CEL-based bin-packing** | Covered as a future extension (see [Section 15](#15-future-extensions-beyond-this-poc)) |
+| **Multi-team queue setup** | Multiple queues for different teams/tiers (see [Section 15](#15-future-extensions-beyond-this-poc)) |
+| **Cohort-based resource sharing** | Borrowing and preemption between queues (see [Section 15](#15-future-extensions-beyond-this-poc)) |
+| **Network/security hardening** | Production networking and security policies |
+
+---
+
+## 8. Success Criteria
+
+The PoC will be deemed successful if all the following criteria are met. These criteria are organized to follow the logical flow of the architecture described in [Section 6](#6-architecture-deep-dive).
+
+### I. Platform Setup
+
+- [ ] RHACM hub cluster is operational with managed clusters registered
+- [ ] cert-manager Operator for Red Hat OpenShift is installed on the hub cluster
+- [ ] Kueue Operator is installed via OperatorHub on the hub cluster
+- [ ] `Kueue` custom resource is created (`name: cluster`) and shows `Available=True`
+- [ ] Kueue Addon (`multicluster-kueue-manager`) is deployed and enabled
+- [ ] `MultiKueueCluster` resources show `CONNECTED=True` for managed clusters
+
+### II. Cluster Configuration
+
+- [ ] GPU-capable managed clusters are labeled with `accelerator=nvidia-tesla-t4`
+- [ ] (Optional) Fake GPU resources are provisioned on managed cluster nodes for testing
+- [ ] CPU-only clusters do **not** have the accelerator label
+- [ ] Job namespace is labeled with `kueue.openshift.io/managed=true`
+
+### III. Placement and MultiKueue
+
+- [ ] `Placement` resource is created in `openshift-kueue-operator` namespace
+- [ ] `PlacementDecision` lists **only** GPU-labeled clusters (e.g., cluster2, cluster3)
+- [ ] `MultiKueueConfig` is **auto-generated** by the OCM controller with the correct cluster list
+- [ ] Both `AdmissionChecks` show `status=True`, `reason=Active`
+- [ ] `ClusterQueue` shows `status=True`, `reason=Ready`, `message="Can admit new workloads"`
+
+### IV. Job Routing
+
+- [ ] A GPU job is submitted to the hub cluster via `user-queue` LocalQueue
+- [ ] The job is dispatched to **only** one of the GPU-labeled clusters
+- [ ] The CPU-only cluster (cluster1) receives **no** workload
+- [ ] Workload on the hub shows `ADMITTED=True`
+- [ ] Workload on the spoke cluster shows `ADMITTED=True`
+
+### V. Dynamic Behavior
+
+- [ ] Removing the `accelerator` label from a cluster **automatically** removes it from the `MultiKueueConfig`
+- [ ] Adding the `accelerator` label to a new cluster **automatically** adds it to the `MultiKueueConfig`
+- [ ] No manual `MultiKueueConfig` editing is required at any point
+
+### VI. Negative Validation
+
+- [ ] A cluster without the `accelerator` label does **not** appear in the `PlacementDecision`
+- [ ] A cluster without the `accelerator` label receives **no** workloads
+
+---
+
+## 9. Demo Environment
+
+### Cluster Topology
+
+| Cluster | Role | Hardware | Labels | Kueue |
+|---------|------|----------|--------|-------|
+| **hub-cluster** | RHACM Hub + Kueue Manager | CPU | N/A | Kueue Operator + Addon installed |
+| **cluster1** | Managed Spoke | CPU only | *(none)* | Kueue synced by Addon |
+| **cluster2** | Managed Spoke | NVIDIA Tesla T4 × 3 | `accelerator=nvidia-tesla-t4` | Kueue synced by Addon |
+| **cluster3** | Managed Spoke | NVIDIA Tesla T4 × 3 | `accelerator=nvidia-tesla-t4` | Kueue synced by Addon |
+
+> **Note:** If you don't have physical GPUs, you can use the fake GPU setup described in [Step 2 of the Execution Guide](#step-2-optional-set-up-fake-gpu-resources).
+
+### Component Versions
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| **Red Hat Advanced Cluster Management** | 2.15+ | Developer Preview for Kueue Addon |
+| **OpenShift Container Platform** | 4.18 – 4.21 | Hub and spoke clusters |
+| **Red Hat Build of Kueue** | 1.1+ | Installed via OperatorHub. Uses Kueue API `kueue.x-k8s.io/v1beta1`. |
+| **cert-manager Operator** | Latest | Required prerequisite for Kueue Operator |
+| **Kueue Addon** | Developer Preview | Managed by RHACM |
+
+> **Note on API Versions:** The manifests in this PoC use `kueue.x-k8s.io/v1beta1`. Red Hat Build of Kueue 1.1 (based on upstream Kueue 0.12) also supports `kueue.x-k8s.io/v1beta2`. If you are running RHBoK 1.1+, you may update the manifests to use `v1beta2` for access to the latest API features.
+
+### Network Requirements
+
+- Managed clusters must be able to reach the RHACM hub (standard RHACM requirement)
+- MultiKueue uses **cluster-proxy** — no direct hub-to-spoke network access required
+- All communication goes through the RHACM managed cluster registration agent
+
+---
+
+## 10. Step-by-Step Execution Guide
+
+This section walks through the PoC execution in order. Each step references a numbered manifest file in the [`manifests/`](manifests/) directory.
 
 ### Prerequisites Check
 
@@ -365,10 +525,19 @@ Before starting, verify that your environment is ready:
 # 1. Verify RHACM hub and managed clusters
 oc get managedclusters
 
-# 2. Verify Kueue Addon is installed
+# 2. Verify cert-manager Operator is installed
+oc get csv -n cert-manager-operator | grep cert-manager
+
+# 3. Verify Kueue Operator is installed
+oc get csv -n openshift-kueue-operator | grep kueue
+
+# 4. Verify Kueue CR is created and available
+oc get kueue cluster -ojson | jq '.status.conditions'
+
+# 5. Verify Kueue Addon is installed
 oc get clustermanagementaddon multicluster-kueue-manager
 
-# 3. Verify MultiKueue cluster connectivity
+# 6. Verify MultiKueue cluster connectivity
 oc get multikueuecluster -o wide
 ```
 
@@ -486,7 +655,27 @@ Expected output:
 
 ---
 
-### Step 3: Create the Placement
+### Step 3: Label the Job Namespace
+
+Label the namespace where jobs will be submitted so that Red Hat Build of Kueue manages workloads in that namespace. This step is required per the [Red Hat Build of Kueue documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue).
+
+```bash
+oc label namespace default kueue.openshift.io/managed=true
+```
+
+**Verify:**
+
+```bash
+oc get namespace default --show-labels | grep kueue
+```
+
+Expected output should include `kueue.openshift.io/managed=true`.
+
+> **Note:** Without this label, jobs in the namespace will not be subject to Kueue's admission control. In RHBoK 1.0, jobs with the `kueue.x-k8s.io/queue-name` label were reconciled regardless of namespace labels, but this behavior should not be relied upon in newer versions.
+
+---
+
+### Step 4: Create the Placement
 
 The Placement defines which clusters should receive GPU workloads. It is created in the Kueue Operator namespace (`openshift-kueue-operator`) on the hub cluster.
 
@@ -546,7 +735,7 @@ Expected output:
 
 ---
 
-### Step 4: Apply the MultiKueue Setup
+### Step 5: Apply the MultiKueue Setup
 
 This creates the ResourceFlavor, ClusterQueue, LocalQueue, and both AdmissionChecks on the hub.
 
@@ -625,7 +814,7 @@ spec:
 
 ---
 
-### Step 5: Verify All Resources Are Active
+### Step 6: Verify All Resources Are Active
 
 This is the most important step. All resources must show healthy status before submitting jobs.
 
@@ -638,7 +827,7 @@ chmod +x manifests/05-verify.sh
 
 Or verify manually:
 
-#### 5a. Verify the MultiKueueConfig
+#### 6a. Verify the MultiKueueConfig
 
 The OCM controller should have dynamically generated a `MultiKueueConfig` listing only the GPU clusters:
 
@@ -659,7 +848,7 @@ Expected output:
 
 Only clusters with `accelerator=nvidia-tesla-t4` appear. `cluster1` is absent.
 
-#### 5b. Verify the AdmissionChecks
+#### 6b. Verify the AdmissionChecks
 
 Both admission checks must show `Active`:
 
@@ -694,7 +883,7 @@ Expected output:
 ]
 ```
 
-#### 5c. Verify the ClusterQueue
+#### 6c. Verify the ClusterQueue
 
 The ClusterQueue must be `Ready` and able to admit workloads:
 
@@ -718,22 +907,11 @@ Expected output:
 ]
 ```
 
-**If ClusterQueue shows `Active=False`**, check:
-
-1. Both AdmissionChecks are `Active`
-2. MultiKueueConfig has at least one cluster listed
-3. MultiKueueClusters show `CONNECTED=True`:
-   ```bash
-   oc get multikueuecluster -o wide
-   ```
-4. Kueue controller logs for errors:
-   ```bash
-   oc logs deployment/kueue-controller-manager -n openshift-kueue-operator --tail=50
-   ```
+> **If ClusterQueue shows `Active=False`**, see [Section 11: Troubleshooting](#11-troubleshooting) for resolution steps.
 
 ---
 
-### Step 6: Submit a GPU Job
+### Step 7: Submit a GPU Job
 
 Deploy a job that requests GPU resources. It will be routed through MultiKueue to one of the GPU clusters.
 
@@ -789,9 +967,9 @@ spec:
 
 ---
 
-### Step 7: Verify Job Routing
+### Step 8: Verify Job Routing
 
-#### 7a. Check the Workload on the Hub
+#### 8a. Check the Workload on the Hub
 
 ```bash
 oc get workload -n default
@@ -806,7 +984,7 @@ demo2-job<id>-<hash>       user-queue   cluster-queue   True                  10
 
 The workload should show `ADMITTED=True`.
 
-#### 7b. Verify Which Cluster Received the Job
+#### 8b. Verify Which Cluster Received the Job
 
 The hub's MultiKueue dispatches the job to one of the GPU clusters:
 
@@ -827,7 +1005,7 @@ demo2-job<id>-<hash>       user-queue   cluster-queue   True                  5m
 
 The other GPU cluster should show `No resources found in default namespace.`
 
-#### 7c. Confirm cluster1 (CPU) Did NOT Receive the Job
+#### 8c. Confirm cluster1 (CPU) Did NOT Receive the Job
 
 ```bash
 kubectl get workload --context <cluster1-context>
@@ -843,7 +1021,7 @@ No resources found in default namespace.
 
 ---
 
-### Step 8: (Optional) Demonstrate Dynamic Behavior
+### Step 9: (Optional) Demonstrate Dynamic Behavior
 
 The power of this setup is that the `MultiKueueConfig` is **dynamically generated** from the Placement. Changes to cluster labels automatically update the routing configuration.
 
@@ -879,7 +1057,7 @@ Expected output:
 
 ---
 
-### Step 9: Cleanup
+### Step 10: Cleanup
 
 Remove all PoC resources when you are done.
 
@@ -906,13 +1084,151 @@ oc delete -f manifests/02-gpu-placement.yaml
 oc label managedcluster cluster2 accelerator-
 oc label managedcluster cluster3 accelerator-
 
+# (Optional) Remove namespace label
+oc label namespace default kueue.openshift.io/managed-
+
 # Verify cleanup
 oc get clusterqueue,localqueue,admissioncheck,multikueueconfig,placement -A
 ```
 
 ---
 
-## 9. Roles and Responsibilities
+## 11. Troubleshooting
+
+This section covers common issues encountered during the PoC and their resolutions.
+
+### ClusterQueue Shows `Active=False`
+
+**Symptom:** `oc get clusterqueues` shows the ClusterQueue with `Active=False`.
+
+**Resolution checklist:**
+
+1. Verify both AdmissionChecks are `Active`:
+   ```bash
+   oc get admissionchecks multikueue-config-demo2 multikueue-demo2 -ojson | \
+     jq '.items[] | .metadata.name, .status.conditions[] | select(.type=="Active") | .status'
+   ```
+2. Verify MultiKueueConfig has at least one cluster listed:
+   ```bash
+   oc get multikueueconfig multikueue-config-demo2 -ojson | jq '.spec.clusters'
+   ```
+3. Verify MultiKueueClusters show `CONNECTED=True`:
+   ```bash
+   oc get multikueuecluster -o wide
+   ```
+4. Check Kueue controller logs for errors:
+   ```bash
+   oc logs deployment/kueue-controller-manager -n openshift-kueue-operator --tail=50
+   ```
+
+### Job Stays in Pending State
+
+**Symptom:** The workload shows `ADMITTED` as empty and stays `Pending`.
+
+**Resolution checklist:**
+
+1. Verify the LocalQueue is connected and active:
+   ```bash
+   oc get localqueue user-queue -n default -ojson | jq '.status.conditions'
+   ```
+2. Verify the ClusterQueue has sufficient quota for the job's resource requests:
+   ```bash
+   oc get clusterqueue cluster-queue -ojson | jq '.spec.resourceGroups'
+   ```
+3. Verify the namespace is labeled for Kueue management:
+   ```bash
+   oc get namespace default --show-labels | grep kueue
+   ```
+   If missing, add the label:
+   ```bash
+   oc label namespace default kueue.openshift.io/managed=true
+   ```
+
+### MultiKueueConfig Not Generated
+
+**Symptom:** `oc get multikueueconfig multikueue-config-demo2` returns `not found`.
+
+**Resolution checklist:**
+
+1. Verify the Placement exists in the correct namespace:
+   ```bash
+   oc get placement -n openshift-kueue-operator
+   ```
+   The Placement **must** be in `openshift-kueue-operator` — not in `default` or any other namespace.
+
+2. Verify the PlacementDecision has been generated:
+   ```bash
+   oc get placementdecision -n openshift-kueue-operator
+   ```
+
+3. Verify the OCM AdmissionCheck controller is running:
+   ```bash
+   oc get pods -n openshift-kueue-operator | grep kueue
+   ```
+
+4. Check the OCM controller logs:
+   ```bash
+   oc logs deployment/kueue-controller-manager -n openshift-kueue-operator --tail=100 | grep -i placement
+   ```
+
+### Job Not Dispatched to Spoke Cluster
+
+**Symptom:** Workload shows `ADMITTED=True` on the hub but no workload appears on any spoke cluster.
+
+**Resolution checklist:**
+
+1. Verify the PlacementDecision includes the expected clusters:
+   ```bash
+   oc get placementdecision -n openshift-kueue-operator -ojson | \
+     jq '.items[].status.decisions[].clusterName'
+   ```
+2. Verify managed cluster labels match the Placement criteria:
+   ```bash
+   oc get managedclusters --show-labels
+   ```
+3. Verify spoke ClusterQueue and LocalQueue names match the hub:
+   ```bash
+   kubectl get clusterqueue,localqueue --context <spoke-context>
+   ```
+   Names must be `cluster-queue` and `user-queue` respectively.
+
+4. Verify spoke cluster has sufficient resources (real or fake GPUs):
+   ```bash
+   kubectl get nodes -ojson --context <spoke-context> | \
+     jq '.items[].status.allocatable["nvidia.com/gpu"]'
+   ```
+
+### `local-cluster` Shows `CONNECTED=False`
+
+**Symptom:** `oc get multikueuecluster` shows `local-cluster` with `CONNECTED=False`.
+
+**This is expected behavior.** MultiKueue does not support submitting jobs to the management cluster itself. Only spoke clusters should show `CONNECTED=True`.
+
+### Previous Kueue Resources Cause Conflicts
+
+**Symptom:** Applying resources fails with admission check or ClusterQueue conflicts.
+
+**Resolution:** Clean up all previous Kueue resources before starting:
+
+```bash
+oc delete clusterqueue cluster-queue 2>/dev/null
+oc delete localqueue user-queue -n default 2>/dev/null
+oc delete admissioncheck --all 2>/dev/null
+oc delete resourceflavor default-flavor 2>/dev/null
+oc delete placement -n openshift-kueue-operator --all 2>/dev/null
+```
+
+Verify with:
+
+```bash
+oc get clusterqueue,localqueue,admissioncheck -A
+```
+
+All should return `No resources found`.
+
+---
+
+## 12. Roles and Responsibilities
 
 | Role | Organization | Responsibilities |
 |------|-------------|-----------------|
@@ -924,7 +1240,7 @@ oc get clusterqueue,localqueue,admissioncheck,multikueueconfig,placement -A
 
 ---
 
-## 10. Timeline
+## 13. Timeline
 
 The estimated timeline for this PoC is **1–2 weeks**, with key milestones:
 
@@ -943,7 +1259,7 @@ The estimated timeline for this PoC is **1–2 weeks**, with key milestones:
 
 ---
 
-## 11. Assumptions and Prerequisites
+## 14. Assumptions and Prerequisites
 
 | # | Assumption |
 |---|-----------|
@@ -951,15 +1267,17 @@ The estimated timeline for this PoC is **1–2 weeks**, with key milestones:
 | 2 | Managed clusters are part of a `ManagedClusterSet` (the `global` set is sufficient) |
 | 3 | At least 1 managed cluster has GPUs (or fake GPUs can be provisioned for demo) |
 | 4 | At least 1 managed cluster is CPU-only (to demonstrate exclusion from GPU routing) |
-| 5 | Kueue Operator is available in OperatorHub on the hub cluster |
-| 6 | `oc` CLI access with `cluster-admin` privileges on the hub cluster |
-| 7 | `kubectl` context configured for each managed cluster (for verification) |
-| 8 | Network connectivity between hub and managed clusters (standard RHACM requirement) |
-| 9 | Collaboration and timely feedback from the client team |
+| 5 | **cert-manager Operator for Red Hat OpenShift** is installed on the hub cluster (required by Kueue Operator) |
+| 6 | Kueue Operator is available in OperatorHub on the hub cluster |
+| 7 | `oc` CLI access with `cluster-admin` privileges on the hub cluster |
+| 8 | `kubectl` context configured for each managed cluster (for verification) |
+| 9 | Network connectivity between hub and managed clusters (standard RHACM requirement) |
+| 10 | Job namespaces are labeled with `kueue.openshift.io/managed=true` for Kueue management |
+| 11 | Collaboration and timely feedback from the client team |
 
 ---
 
-## 12. Future Extensions (Beyond This PoC)
+## 15. Future Extensions (Beyond This PoC)
 
 This PoC demonstrates **label-based** cluster selection — the foundational capability. The platform supports progressively more sophisticated scheduling:
 
@@ -1024,7 +1342,148 @@ spec:
 | `cpu-queue` | CPUPlacement | Clusters with `cluster-type=cpu-only` | ETL, preprocessing |
 | `gold-gpu-queue` | GoldGPUPlacement | Premium A100/H100 clusters | Critical/priority jobs |
 
-### Extension 4: AI Platform Integration
+### Extension 4: Cohort-Based Resource Sharing
+
+**Problem:** Multiple teams share a GPU fleet, but rigid quotas lead to idle resources when one team is inactive while another team's jobs wait.
+
+**Solution:** Group ClusterQueues into a **Cohort** — a shared resource pool where teams can borrow unused resources from each other. Combined with preemption policies, this maximizes GPU utilization while guaranteeing each team's minimum allocation.
+
+```yaml
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: team1
+spec:
+  cohort: "organization"       # Both teams share this cohort
+  queueingStrategy: BestEffortFIFO
+  preemption:
+    reclaimWithinCohort: Any   # Can reclaim own resources from cohort
+    borrowWithinCohort:
+      policy: Never            # Cannot preempt to borrow
+    withinClusterQueue: LowerOrNewerEqualPriority
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: "nvidia-a100-flavor"
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 8        # Guaranteed 8 GPUs
+```
+
+**Key concepts:**
+
+| Policy | Meaning |
+|--------|---------|
+| `BestEffortFIFO` | Fair scheduling — processes jobs in order while considering resource availability |
+| `reclaimWithinCohort: Any` | A team can preempt any workload in the cohort to reclaim its own guaranteed resources |
+| `borrowWithinCohort: Never` | A team cannot preempt other teams' workloads to borrow beyond its quota |
+| `withinClusterQueue: LowerOrNewerEqualPriority` | Within the same team, lower-priority or newer equal-priority jobs can be preempted |
+
+Reference: [Kueue Multi-Team Resource Management Workshop](https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue)
+
+### Extension 5: Fair Sharing with Preemption Strategies
+
+**Problem:** In a large organization with many teams, you need proportional resource allocation with the ability to preempt workloads that exceed their fair share.
+
+**Solution:** Enable **Usage-Based Admission Fair Sharing** at the ClusterQueue level, and assign `fairSharing` weights to LocalQueues to control proportional allocation:
+
+```yaml
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: default
+spec:
+  admissionScope:
+    admissionMode: UsageBasedAdmissionFairSharing
+```
+
+```yaml
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: team-a-queue
+spec:
+  clusterQueue: default
+  fairSharing:
+    weight: "2"    # Team A gets 2x the share of Team B
+```
+
+For multi-team setups, preemption strategies ensure that over-consuming teams give back resources:
+
+```yaml
+apiVersion: config.kueue.x-k8s.io/v1beta1
+kind: Configuration
+fairSharing:
+  preemptionStrategies:
+  - LessThanOrEqualToFinalShare
+```
+
+### Extension 6: Hierarchical Cohorts
+
+**Problem:** A large organization has multiple departments, each with multiple teams. You need hierarchical resource allocation — the organization defines a GPU budget, departments get sub-allocations, and teams within each department share their department's allocation.
+
+**Solution:** Use **Hierarchical Cohorts** (available in newer Kueue versions) to model organizational structures:
+
+```
+ai-org (Cohort) — 1000 GPUs
+├── gen-ai (Cohort) — 800 GPUs, weight: 2
+│   ├── Team 1 (ClusterQueue)
+│   └── Team 2 (ClusterQueue)
+└── pred-ai (Cohort) — 200 GPUs, weight: 1
+    ├── Team 3 (ClusterQueue)
+    └── Team 4 (ClusterQueue)
+```
+
+```yaml
+kind: Cohort
+metadata:
+  name: "gen-ai"
+spec:
+  parent: "ai-org"
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: "nvidia-gpu-flavor"
+      resources:
+      - name: "nvidia.com/gpu"
+        nominalQuota: 800
+  fairSharing:
+    weight: 2
+```
+
+### Extension 7: Topology Aware Scheduling (TAS)
+
+**Problem:** For distributed training jobs, network topology matters. GPUs connected via NVLink within a node communicate 10x faster than GPUs across nodes connected via InfiniBand or RoCE. You want to schedule multi-GPU jobs on topologically close resources.
+
+**Solution:** Define **Topology** resources that model your hardware hierarchy (block → rack → host → GPU), and associate them with ResourceFlavors:
+
+```yaml
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: Topology
+metadata:
+  name: "default"
+spec:
+  levels:
+  - nodeLabel: "cluster.acme.com/topology-block"
+  - nodeLabel: "cluster.acme.com/topology-rack"
+  - nodeLabel: "cluster.acme.com/topology-host"
+  - nodeLabel: "kubernetes.io/hostname"
+```
+
+```yaml
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: gpu-a100-flavor
+spec:
+  nodeLabels:
+    nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB
+  topologyName: "default"
+```
+
+Kueue will then schedule multi-GPU workloads on topologically adjacent resources, optimizing inter-GPU communication bandwidth.
+
+### Extension 8: AI Platform Integration
 
 **Problem:** Data scientists want to use their familiar tools (Jupyter, pipelines) rather than raw `oc create` commands.
 
@@ -1036,11 +1495,11 @@ spec:
 
 ---
 
-## 13. Reference Links
+## 16. Reference Links
 
 | Resource | URL |
 |----------|-----|
-| **Red Hat Build of Kueue (OCP 4.21)** | [https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/ai_workloads/red-hat-build-of-kueue](https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/ai_workloads/red-hat-build-of-kueue) |
+| **Red Hat Build of Kueue (OCP 4.18)** | [https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue) |
 | **RHACM Documentation** | [https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) |
 | **OCM Kueue Integration Solution** | [https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check](https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check) |
 | **Kueue Addon Repository** | [https://github.com/open-cluster-management-io/addon-contrib/tree/main/kueue-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/kueue-addon) |
@@ -1049,23 +1508,24 @@ spec:
 | **Extending Managed Clusters with Custom Attributes** | [https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/](https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/) |
 | **Extend Multicluster Scheduling Capabilities** | [https://open-cluster-management.io/docs/scenarios/extend-multicluster-scheduling-capabilities/](https://open-cluster-management.io/docs/scenarios/extend-multicluster-scheduling-capabilities/) |
 | **Resource Usage Collect Addon** | [https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon) |
+| **Kueue Multi-Team Workshop** | [https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue](https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue) |
 | **Developer Preview Scope of Support** | [https://access.redhat.com/support/offerings/devpreview](https://access.redhat.com/support/offerings/devpreview) |
 | **Open Cluster Management** | [https://open-cluster-management.io/](https://open-cluster-management.io/) |
 
 ---
 
-## 14. Next Steps
+## 17. Next Steps
 
 1. **Kick-off meeting** to finalize PoC scope, confirm cluster access, and define specific test configurations
-2. **Environment setup** — verify RHACM hub, managed clusters, and Kueue Operator availability
-3. **Execute PoC** following the [Step-by-Step Execution Guide](#8-step-by-step-execution-guide)
+2. **Environment setup** — verify RHACM hub, managed clusters, cert-manager, and Kueue Operator availability
+3. **Execute PoC** following the [Step-by-Step Execution Guide](#10-step-by-step-execution-guide)
 4. **Document results** — capture screenshots, command output, and any issues encountered
 5. **Review session** — present findings, discuss success criteria validation, and plan next phase
-6. **Plan extensions** — evaluate [Dynamic Score-Based Scheduling](#extension-1-dynamic-score-based-scheduling) and [Multi-Team Queue Setup](#extension-3-multi-team-queue-setup) as follow-on phases
+6. **Plan extensions** — evaluate [Dynamic Score-Based Scheduling](#extension-1-dynamic-score-based-scheduling), [Cohort-Based Resource Sharing](#extension-4-cohort-based-resource-sharing), and [Multi-Team Queue Setup](#extension-3-multi-team-queue-setup) as follow-on phases
 
 ---
 
-## 15. Confidentiality / Copyright / Account Team
+## 18. Confidentiality / Copyright / Account Team
 
 ### Confidentiality Clause
 
