@@ -1382,20 +1382,21 @@ All should return `No resources found`.
 
 ## 13. Timeline
 
-The estimated timeline for this PoC is **1–2 weeks**, with key milestones:
+The estimated timeline for this PoC is **5 business days**, with key milestones:
 
 | Phase | Duration | Activities |
 |-------|----------|------------|
-| **Week 1: Setup** | 3–5 days | Environment validation, RHACM verification, Kueue Operator install, Kueue Addon deployment, cluster labeling |
-| **Week 2: Execution** | 3–5 days | Placement configuration, MultiKueue setup, job submission, verification, dynamic behavior demo, documentation of results |
+| **Days 1–2: Setup** | 2 days | Kick-off, environment validation, RHACM verification, Kueue Operator install, Kueue Addon deployment, cluster labeling |
+| **Days 3–4: Execution** | 2 days | Placement configuration, MultiKueue setup, job submission, verification, dynamic behavior demo |
+| **Day 5: Review** | 1 day | Results documentation, review session, sign-off, discuss future extensions |
 
 | Milestone | Target | Owner |
 |-----------|--------|-------|
 | Kick-off meeting | Day 1 | Joint |
-| Environment ready | Day 3 | \<Customer\> |
-| Platform setup complete | Day 5 | Red Hat |
-| Scenario execution complete | Day 8 | Red Hat |
-| Results review & sign-off | Day 10 | Joint |
+| Environment ready (RHACM hub + managed clusters) | Day 1 | \<Customer\> |
+| Platform setup complete (Kueue Operator, Addon, labels) | Day 2 | Red Hat |
+| Scenario execution & verification complete | Day 4 | Red Hat |
+| Results review & sign-off | Day 5 | Joint |
 
 ---
 
@@ -1474,7 +1475,13 @@ Reference: [OCM Scenario 3: Dynamic Score-Based MultiKueue Setup](https://github
 
 ```yaml
 spec:
+  clusterSets:
+  - global
   predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchLabels:
+            accelerator: nvidia-tesla-t4
     - requiredClusterSelector:
         celSelector:
           celExpressions:

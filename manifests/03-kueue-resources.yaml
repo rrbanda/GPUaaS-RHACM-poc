@@ -2,7 +2,7 @@
 # Step 3: Create Kueue Resources for Label-Based GPU Scheduling
 # ==============================================================================
 # This file creates the full MultiKueue setup on the hub cluster:
-#   1. ResourceFlavor     - Defines GPU hardware characteristics (node labels, tolerations)
+#   1. ResourceFlavor     - Defines the resource type (bare on hub — see note below)
 #   2. ClusterQueue       - Hub-level queue with quotas and two admission checks
 #   3. LocalQueue         - Namespace-level entry point for users
 #   4. AdmissionCheck #1  - Kueue MultiKueue controller (dispatches jobs)
@@ -13,9 +13,8 @@
 #   - ClusterQueue: cluster-queue
 #   - LocalQueue:   user-queue
 #
-# CUSTOMIZATION: Update the ResourceFlavor nodeLabels and tolerations to match
-# your GPU node configuration. Run the following on a GPU node to discover labels:
-#   oc get node <gpu-node> -ojson | jq '.metadata.labels | with_entries(select(.key | contains("gpu")))'
+# CUSTOMIZATION: Update ClusterQueue quotas to match your environment's capacity.
+# The ResourceFlavor on the hub should remain BARE (see note below).
 #
 # Usage:
 #   oc apply -f 03-kueue-resources.yaml
