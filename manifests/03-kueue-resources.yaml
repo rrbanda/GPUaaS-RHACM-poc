@@ -24,25 +24,23 @@
 #   https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check
 # ==============================================================================
 ---
-# ResourceFlavor — defines GPU hardware characteristics.
-# The nodeLabels ensure Kueue schedules workloads on GPU-capable nodes.
-# The tolerations allow pods to be scheduled on nodes tainted for GPU workloads.
+# ResourceFlavor — defines the resource type for quota accounting.
 #
-# Adjust nodeLabels to match your environment. Common GPU node labels:
-#   nvidia.com/gpu.present: "true"                    (any NVIDIA GPU)
-#   nvidia.com/gpu.product: "NVIDIA-A100-SXM4-80GB"   (specific GPU model)
-#   nvidia.com/gpu.product: "Tesla-T4"                 (Tesla T4)
+# IMPORTANT: In a MultiKueue hub setup, the ResourceFlavor on the hub cluster
+# should be BARE (no nodeLabels, no tolerations). This is because:
+#   - The hub never runs workloads locally — it dispatches them to spoke clusters.
+#   - Adding GPU nodeLabels to the hub's ResourceFlavor would cause Kueue to look
+#     for matching GPU nodes on the (CPU-only) hub cluster and fail.
+#   - The Kueue Addon manages ResourceFlavors on the spoke clusters separately.
+#
+# If you need hardware-specific ResourceFlavors (e.g., for multi-GPU-type setups),
+# configure them on the spoke clusters, not on the hub.
+#
+# Reference: https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ResourceFlavor
 metadata:
   name: "default-flavor"
-spec:
-  nodeLabels:
-    nvidia.com/gpu.present: "true"
-  tolerations:
-  - key: nvidia.com/gpu
-    operator: Exists
-    effect: NoSchedule
 ---
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ClusterQueue

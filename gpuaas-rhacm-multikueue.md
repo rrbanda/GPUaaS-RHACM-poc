@@ -519,8 +519,8 @@ The manifests and scripts in this PoC use example values. Use this table to iden
 |----------------|-------|---------------|-----------------|
 | **Managed cluster names** | `01-cluster-labels.sh`, inline examples | `cluster2`, `cluster3` | The script prompts for names. Replace inline examples with your cluster names. |
 | **GPU accelerator label** | `01-cluster-labels.sh`, `02-gpu-placement.yaml` | `accelerator=nvidia-tesla-t4` | The script prompts for the label value. Update `matchLabels` in the Placement to match. |
-| **ResourceFlavor nodeLabels** | `03-kueue-resources.yaml` | `nvidia.com/gpu.present: "true"` | Run `oc get node <gpu-node> -ojson \| jq '.metadata.labels'` on a GPU node to discover the correct labels. Common labels: `nvidia.com/gpu.product`, `nvidia.com/gpu.count`. |
-| **ResourceFlavor tolerations** | `03-kueue-resources.yaml` | `nvidia.com/gpu` NoSchedule | Match the taints on your GPU nodes. Run `oc get node <gpu-node> -ojson \| jq '.spec.taints'` to check. |
+| **Hub ResourceFlavor** | `03-kueue-resources.yaml` | Bare (no `spec`) | Keep the hub's ResourceFlavor **bare** — no `nodeLabels` or `tolerations`. The hub never runs workloads; it dispatches to spokes. Adding GPU nodeLabels to the hub could cause Kueue to fail looking for GPU nodes on the CPU-only hub. |
+| **Spoke ResourceFlavors** | Managed by Kueue Addon | Auto-synced | The Kueue Addon manages ResourceFlavors on spoke clusters. If you need hardware-specific flavors on spokes, configure them directly on the spoke clusters. |
 | **ClusterQueue quotas** | `03-kueue-resources.yaml` | 9 CPU, 36Gi memory, 3 GPU | Set to the total resources available across your target spoke clusters. |
 | **Job namespace** | `01b-namespace-label.sh`, `04-sample-gpu-job.yaml` | `default` | Use any namespace; ensure it is labeled with `kueue.openshift.io/managed=true`. |
 | **GPU resource request** | `04-sample-gpu-job.yaml` | `nvidia.com/gpu: "1"` | Match your GPU resource name. AMD GPUs use `amd.com/gpu`. |
@@ -716,6 +716,8 @@ cluster3   true           https://cluster3-control-plane:6443   True     True   
 
 > **Tip:** If your managed clusters have real GPUs (e.g., NVIDIA L4, A100, H100), label them with the appropriate accelerator type and update the Placement to match. The pattern is identical.
 
+> **Alternative: ClusterClaims.** Instead of manually labeling clusters, you can use [ClusterClaims](https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/) to have managed clusters automatically report their hardware capabilities. ClusterClaims are custom attributes that a managed cluster advertises to the hub. The Placement can then select clusters using `claimSelector` instead of `labelSelector`. This approach is more scalable for large fleets where manual labeling is impractical.
+
 ---
 
 ### Step 2: (Optional) Set Up Fake GPU Resources
@@ -850,19 +852,14 @@ oc apply -f manifests/03-kueue-resources.yaml
 **Manifest contents — `03-kueue-resources.yaml`:**
 
 ```yaml
-# ResourceFlavor — defines GPU hardware characteristics
-# Adjust nodeLabels to match your GPU nodes (see "Adapting for Your Environment")
+# ResourceFlavor — defines the resource type for quota accounting.
+# In MultiKueue, the hub's ResourceFlavor is intentionally BARE (no nodeLabels,
+# no tolerations) because the hub never runs workloads locally. The Kueue Addon
+# manages ResourceFlavors on spoke clusters separately.
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ResourceFlavor
 metadata:
   name: "default-flavor"
-spec:
-  nodeLabels:
-    nvidia.com/gpu.present: "true"
-  tolerations:
-  - key: nvidia.com/gpu
-    operator: Exists
-    effect: NoSchedule
 ---
 # ClusterQueue — hub-level queue with quotas and two admission checks
 apiVersion: kueue.x-k8s.io/v1beta1
@@ -1428,7 +1425,28 @@ This PoC demonstrates **label-based** cluster selection — the foundational cap
 
 **Problem:** Multiple GPU clusters exist, but some are heavily utilized while others are idle. You want to route jobs to the cluster with the **most available GPUs**.
 
-**Solution:** Deploy the [resource-usage-collect-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon) to report GPU availability scores via `AddonPlacementScore`. Update the Placement with `prioritizerPolicy` to select clusters by score:
+**Solution:** Deploy the [resource-usage-collect-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon) to report GPU availability scores via `AddonPlacementScore`. Install it via Helm:
+
+```bash
+# Add the OCM Helm repository
+helm repo add ocm https://open-cluster-management.io/helm-charts/
+helm repo update
+
+# Install the resource-usage-collect-addon
+helm upgrade --install \
+  -n open-cluster-management-addon --create-namespace \
+  resource-usage-collect-addon ocm/resource-usage-collect-addon \
+  --set global.image.repository=quay.io/open-cluster-management/resource-usage-collect-addon
+
+# Verify the addon is deployed on managed clusters
+oc get mca -A | grep resource-usage-collect
+
+# Check GPU availability scores (range: -100 to 100, higher = more available)
+kubectl get addonplacementscore -A -ojson | \
+  jq '.items[] | .metadata.namespace, (.status.scores[] | select(.name == "gpuClusterAvailable"))'
+```
+
+Update the Placement with `prioritizerPolicy` to select clusters by score:
 
 ```yaml
 spec:
@@ -1651,6 +1669,8 @@ Kueue will then schedule multi-GPU workloads on topologically adjacent resources
 | **Extending Managed Clusters with Custom Attributes** | [https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/](https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/) |
 | **Extend Multicluster Scheduling Capabilities** | [https://open-cluster-management.io/docs/scenarios/extend-multicluster-scheduling-capabilities/](https://open-cluster-management.io/docs/scenarios/extend-multicluster-scheduling-capabilities/) |
 | **Resource Usage Collect Addon** | [https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon) |
+| **RHACM + Kueue Blog (Part 1: Installation)** | [https://open-cluster-management.io/blog/2025/07/17/kueue-addon-part1/](https://open-cluster-management.io/blog/2025/07/17/kueue-addon-part1/) |
+| **RHACM + Kueue Blog (Part 2: Advanced Scheduling)** | [https://open-cluster-management.io/blog/2025/09/10/kueue-addon-part2/](https://open-cluster-management.io/blog/2025/09/10/kueue-addon-part2/) |
 | **Kueue Multi-Team Workshop** | [https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue](https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue) |
 | **Developer Preview Scope of Support** | [https://access.redhat.com/support/offerings/devpreview](https://access.redhat.com/support/offerings/devpreview) |
 | **Open Cluster Management** | [https://open-cluster-management.io/](https://open-cluster-management.io/) |
