@@ -511,6 +511,55 @@ The PoC will be deemed successful if all the following criteria are met. These c
 - MultiKueue uses **cluster-proxy** — no direct hub-to-spoke network access required
 - All communication goes through the RHACM managed cluster registration agent
 
+### Adapting for Your Environment
+
+The manifests and scripts in this PoC use example values. Use this table to identify what you must customize for your environment:
+
+| What to Change | Where | Current Value | How to Customize |
+|----------------|-------|---------------|-----------------|
+| **Managed cluster names** | `01-cluster-labels.sh`, inline examples | `cluster2`, `cluster3` | The script prompts for names. Replace inline examples with your cluster names. |
+| **GPU accelerator label** | `01-cluster-labels.sh`, `02-gpu-placement.yaml` | `accelerator=nvidia-tesla-t4` | The script prompts for the label value. Update `matchLabels` in the Placement to match. |
+| **ResourceFlavor nodeLabels** | `03-kueue-resources.yaml` | `nvidia.com/gpu.present: "true"` | Run `oc get node <gpu-node> -ojson \| jq '.metadata.labels'` on a GPU node to discover the correct labels. Common labels: `nvidia.com/gpu.product`, `nvidia.com/gpu.count`. |
+| **ResourceFlavor tolerations** | `03-kueue-resources.yaml` | `nvidia.com/gpu` NoSchedule | Match the taints on your GPU nodes. Run `oc get node <gpu-node> -ojson \| jq '.spec.taints'` to check. |
+| **ClusterQueue quotas** | `03-kueue-resources.yaml` | 9 CPU, 36Gi memory, 3 GPU | Set to the total resources available across your target spoke clusters. |
+| **Job namespace** | `01b-namespace-label.sh`, `04-sample-gpu-job.yaml` | `default` | Use any namespace; ensure it is labeled with `kueue.openshift.io/managed=true`. |
+| **GPU resource request** | `04-sample-gpu-job.yaml` | `nvidia.com/gpu: "1"` | Match your GPU resource name. AMD GPUs use `amd.com/gpu`. |
+| **Job image** | `04-sample-gpu-job.yaml` | `gcr.io/k8s-staging-perf-tests/sleep:v0.1.0` | Replace with your actual training image for real workloads. |
+
+> **Tip:** To discover GPU node labels in your environment:
+> ```bash
+> # List all GPU-related labels on nodes
+> oc get nodes -ojson | jq '.items[] | select(.status.capacity["nvidia.com/gpu"] != null) | {name: .metadata.name, gpu_labels: (.metadata.labels | with_entries(select(.key | test("gpu|nvidia|accelerator"))))}'
+> ```
+
+### Supported Workload Types
+
+This PoC demonstrates routing with a basic Kubernetes `Job`. However, Red Hat Build of Kueue supports additional workload types through the `integrations.frameworks` configuration in the Kueue CR:
+
+| Workload Type | Framework Name | Use Case |
+|---------------|---------------|----------|
+| `batch/v1 Job` | `BatchJob` | General-purpose batch jobs (default, used in this PoC) |
+| `kubeflow.org/v1 PyTorchJob` | `PyTorchJob` | Distributed PyTorch training (multi-worker, multi-GPU) |
+| `ray.io/v1 RayJob` | `RayJob` | Ray distributed computing jobs |
+| `ray.io/v1 RayCluster` | `RayCluster` | Ray cluster lifecycle management |
+| `apps/v1 Deployment` | `Deployment` | Long-running inference serving |
+| `apps/v1 StatefulSet` | `StatefulSet` | Stateful workloads |
+| `kubeflow.org/v2 TrainJob` | `TrainJob` | Kubeflow Training v2 jobs |
+
+To enable additional types, update the `Kueue` CR:
+
+```yaml
+spec:
+  config:
+    integrations:
+      frameworks:
+      - BatchJob
+      - PyTorchJob      # Add for distributed training
+      - RayJob           # Add for Ray workloads
+```
+
+All supported types work with MultiKueue for multi-cluster dispatch. The job submission pattern is the same: add `suspend: true` and the `kueue.x-k8s.io/queue-name` label.
+
 ---
 
 ## 10. Step-by-Step Execution Guide
@@ -519,7 +568,7 @@ This section walks through the PoC execution in order. Each step references a nu
 
 ### Prerequisites Check
 
-Before starting, verify that your environment is ready:
+Before starting, verify that your environment is ready. If any component is missing, follow the setup instructions below before proceeding to Step 0.
 
 ```bash
 # 1. Verify RHACM hub and managed clusters
@@ -552,6 +601,59 @@ local-cluster    False       10m
 ```
 
 > **Note:** `local-cluster` showing `CONNECTED=False` is **expected**. MultiKueue does not support submitting jobs to the management cluster itself.
+
+#### If the Kueue CR Does Not Exist
+
+If step 4 above returns `not found`, create the Kueue custom resource. The Kueue CR name **must** be `cluster`:
+
+```bash
+oc apply -f - <<EOF
+apiVersion: kueue.openshift.io/v1
+kind: Kueue
+metadata:
+  name: cluster
+  namespace: openshift-kueue-operator
+spec:
+  managementState: Managed
+  config:
+    integrations:
+      frameworks:
+      - BatchJob
+      - PyTorchJob
+      - RayJob
+      - RayCluster
+EOF
+```
+
+Wait for the Kueue controller to become ready:
+
+```bash
+oc get kueue cluster -ojson | jq '.status.conditions[] | select(.type=="Available")'
+```
+
+Expected: `"status": "True"`, `"reason": "AllReplicasReady"`.
+
+> **Tip:** The `integrations.frameworks` field controls which workload types Kueue manages. `BatchJob` is the default. Add `PyTorchJob`, `RayJob`, `RayCluster`, `Deployment`, `StatefulSet`, or `TrainJob` if your teams use those workload types. See the [Red Hat Build of Kueue documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue) for the full list.
+
+#### If the Kueue Addon Is Not Installed
+
+If step 5 above returns `not found`, enable the Kueue Addon via the RHACM console or CLI:
+
+```bash
+oc apply -f - <<EOF
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: ClusterManagementAddOn
+metadata:
+  name: multicluster-kueue-manager
+spec:
+  installStrategy:
+    type: Placements
+EOF
+```
+
+Wait for the addon to deploy and verify MultiKueueCluster connectivity (step 6 above).
+
+> **Note:** The Kueue Addon automatically installs the Kueue Operator on all managed clusters and creates `MultiKueueCluster` resources on the hub. See the [Kueue Addon repository](https://github.com/open-cluster-management-io/addon-contrib/tree/main/kueue-addon) for detailed installation options.
 
 ---
 
@@ -748,11 +850,19 @@ oc apply -f manifests/03-kueue-resources.yaml
 **Manifest contents — `03-kueue-resources.yaml`:**
 
 ```yaml
-# ResourceFlavor
+# ResourceFlavor — defines GPU hardware characteristics
+# Adjust nodeLabels to match your GPU nodes (see "Adapting for Your Environment")
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ResourceFlavor
 metadata:
   name: "default-flavor"
+spec:
+  nodeLabels:
+    nvidia.com/gpu.present: "true"
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
 ---
 # ClusterQueue — hub-level queue with quotas and two admission checks
 apiVersion: kueue.x-k8s.io/v1beta1
@@ -1018,6 +1128,39 @@ No resources found in default namespace.
 ```
 
 **This confirms the label-based Placement is working:** only clusters with `accelerator=nvidia-tesla-t4` receive GPU jobs.
+
+#### 8d. Monitor Kueue Resource Status
+
+Use these commands to get a comprehensive view of the entire Kueue pipeline at any time:
+
+```bash
+# Full pipeline view — all Kueue resources at a glance
+oc get resourceflavors,clusterqueues,localqueues,workloads -o wide
+
+# Check ClusterQueue utilization and admission status
+oc get clusterqueue cluster-queue -ojson | \
+  jq '{name: .metadata.name, admittedWorkloads: .status.admittedWorkloads, pendingWorkloads: .status.pendingWorkloads, flavorsReservation: .status.flavorsReservation}'
+
+# Check LocalQueue status
+oc get localqueue -A -o wide
+
+# Detailed workload information (admission checks, events)
+oc describe workload -n default
+
+# Check which spoke cluster is running the job
+oc get workload -n default -ojson | \
+  jq '.items[] | {name: .metadata.name, queue: .spec.queueName, admitted: .status.conditions[] | select(.type=="Admitted") | .status}'
+```
+
+**Key fields to watch:**
+
+| Resource | Field | Healthy Value |
+|----------|-------|--------------|
+| `ClusterQueue` | `ADMITTED WORKLOADS` | Increments when jobs are dispatched |
+| `ClusterQueue` | `PENDING WORKLOADS` | `0` when all jobs are scheduled |
+| `LocalQueue` | `ADMITTED WORKLOADS` | Matches submitted job count |
+| `Workload` | `ADMITTED` | `True` |
+| `Workload` | `RESERVED IN` | `cluster-queue` |
 
 ---
 

@@ -2,7 +2,7 @@
 # Step 3: Create Kueue Resources for Label-Based GPU Scheduling
 # ==============================================================================
 # This file creates the full MultiKueue setup on the hub cluster:
-#   1. ResourceFlavor     - Defines the resource type
+#   1. ResourceFlavor     - Defines GPU hardware characteristics (node labels, tolerations)
 #   2. ClusterQueue       - Hub-level queue with quotas and two admission checks
 #   3. LocalQueue         - Namespace-level entry point for users
 #   4. AdmissionCheck #1  - Kueue MultiKueue controller (dispatches jobs)
@@ -13,6 +13,10 @@
 #   - ClusterQueue: cluster-queue
 #   - LocalQueue:   user-queue
 #
+# CUSTOMIZATION: Update the ResourceFlavor nodeLabels and tolerations to match
+# your GPU node configuration. Run the following on a GPU node to discover labels:
+#   oc get node <gpu-node> -ojson | jq '.metadata.labels | with_entries(select(.key | contains("gpu")))'
+#
 # Usage:
 #   oc apply -f 03-kueue-resources.yaml
 #
@@ -20,10 +24,25 @@
 #   https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check
 # ==============================================================================
 ---
+# ResourceFlavor — defines GPU hardware characteristics.
+# The nodeLabels ensure Kueue schedules workloads on GPU-capable nodes.
+# The tolerations allow pods to be scheduled on nodes tainted for GPU workloads.
+#
+# Adjust nodeLabels to match your environment. Common GPU node labels:
+#   nvidia.com/gpu.present: "true"                    (any NVIDIA GPU)
+#   nvidia.com/gpu.product: "NVIDIA-A100-SXM4-80GB"   (specific GPU model)
+#   nvidia.com/gpu.product: "Tesla-T4"                 (Tesla T4)
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ResourceFlavor
 metadata:
   name: "default-flavor"
+spec:
+  nodeLabels:
+    nvidia.com/gpu.present: "true"
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
 ---
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ClusterQueue
