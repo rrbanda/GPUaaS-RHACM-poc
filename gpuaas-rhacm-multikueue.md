@@ -1,13 +1,13 @@
-# \<Customer Name\>
+# [Customer Name]
 
 # GPU-as-a-Service with RHACM and MultiKueue
 
 ## Proof of Concept — Label-Based Multi-Cluster GPU Scheduling
 
 **Prepared for:**
-\<Customer Legal Name\>
+[Customer Legal Name]
 
-**Date Delivered:** \<Date\>
+**Date Delivered:** [Date]
 
 **Version:** 1.1
 
@@ -46,7 +46,6 @@ This Proof of Concept demonstrates **GPU-as-a-Service** across a fleet of OpenSh
 - [15. Future Extensions (Beyond This PoC)](#15-future-extensions-beyond-this-poc)
 - [16. Reference Links](#16-reference-links)
 - [17. Next Steps](#17-next-steps)
-- [18. Confidentiality / Copyright / Account Team](#18-confidentiality--copyright--account-team)
 
 ---
 
@@ -1372,9 +1371,9 @@ All should return `No resources found`.
 
 | Role | Organization | Responsibilities |
 |------|-------------|-----------------|
-| **Project Sponsor** | \<Customer\> | Executive oversight, approval of PoC scope and results |
-| **Platform Team** | \<Customer\> | Provide cluster access, networking, infrastructure support |
-| **Subject Matter Experts** | \<Customer\> | Participate in review, provide feedback, validate results |
+| **Project Sponsor** | [Customer] | Executive oversight, approval of PoC scope and results |
+| **Platform Team** | [Customer] | Provide cluster access, networking, infrastructure support |
+| **Subject Matter Experts** | [Customer] | Participate in review, provide feedback, validate results |
 | **Red Hat Team** | Red Hat | Solution design, guidance, architecture review, execution, configuration, troubleshooting, documentation |
 | **Support Team** | Red Hat | Assistance with product issues during PoC |
 
@@ -1393,7 +1392,7 @@ The estimated timeline for this PoC is **5 business days**, with key milestones:
 | Milestone | Target | Owner |
 |-----------|--------|-------|
 | Kick-off meeting | Day 1 | Joint |
-| Environment ready (RHACM hub + managed clusters) | Day 1 | \<Customer\> |
+| Environment ready (RHACM hub + managed clusters) | Day 1 | [Customer] |
 | Platform setup complete (Kueue Operator, Addon, labels) | Day 2 | Red Hat |
 | Scenario execution & verification complete | Day 4 | Red Hat |
 | Results review & sign-off | Day 5 | Joint |
@@ -1693,25 +1692,3 @@ Kueue will then schedule multi-GPU workloads on topologically adjacent resources
 5. **Review session** — present findings, discuss success criteria validation, and plan next phase
 6. **Plan extensions** — evaluate [Dynamic Score-Based Scheduling](#extension-1-dynamic-score-based-scheduling), [Cohort-Based Resource Sharing](#extension-4-cohort-based-resource-sharing), and [Multi-Team Queue Setup](#extension-3-multi-team-queue-setup) as follow-on phases
 
----
-
-## 18. Confidentiality / Copyright / Account Team
-
-### Confidentiality Clause
-
-The information presented in this document is exclusively confidential to Red Hat, Inc. It has been made available to \<Customer Legal Name\> for consideration and review of Red Hat's subscription and service offerings. In no event shall all or any part of this document be disclosed or disseminated without the express written permission of Red Hat, Inc. The holder of this document may not utilize Red Hat's name in any correspondence to any party concerning this document or anything about this document without the express consent of Red Hat, Inc.
-
-### Copyright and Disclaimer
-
-Copyright 2025 by Red Hat, Inc. of Raleigh, NC. All rights reserved. No part of the work covered by the copyright herein may be reproduced or used in any form or by any means — graphic, electronic, or mechanical, including photocopying, recording, taping, or information storage and retrieval systems — without permission in writing from Red Hat, Inc.
-
-This document is not a quote and does not include any binding commitments by Red Hat.
-
-### Red Hat Account Team
-
-| Role | Name | Title | Email | Phone |
-|------|------|-------|-------|-------|
-| **Account Leader** | \<Account Leader Name\> | Account Executive | first.last@redhat.com | +1 (555) 555-5555 |
-| **Account Key Contributor** | \<Account Key Contributor Name\> | Solution Architect | first.last@redhat.com | +1 (555) 555-5555 |
-| **Red Hat Lead** | \<Name\> | \<Title\> | first.last@redhat.com | +1 (555) 555-5555 |
-| **Red Hat Contributor** | \<Name\> | \<Title\> | first.last@redhat.com | +1 (555) 555-5555 |
