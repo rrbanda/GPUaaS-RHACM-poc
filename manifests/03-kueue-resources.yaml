@@ -1,0 +1,82 @@
+# ==============================================================================
+# Step 3: Create Kueue Resources for Label-Based GPU Scheduling
+# ==============================================================================
+# This file creates the full MultiKueue setup on the hub cluster:
+#   1. ResourceFlavor     - Defines the resource type
+#   2. ClusterQueue       - Hub-level queue with quotas and two admission checks
+#   3. LocalQueue         - Namespace-level entry point for users
+#   4. AdmissionCheck #1  - Kueue MultiKueue controller (dispatches jobs)
+#   5. AdmissionCheck #2  - OCM Placement controller (selects clusters)
+#
+# IMPORTANT: The ClusterQueue and LocalQueue names MUST match what the
+# kueue-addon syncs to spoke clusters. By default the addon syncs:
+#   - ClusterQueue: cluster-queue
+#   - LocalQueue:   user-queue
+#
+# Usage:
+#   oc apply -f 03-kueue-resources.yaml
+#
+# Reference:
+#   https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check
+# ==============================================================================
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: "default-flavor"
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: "cluster-queue"
+spec:
+  namespaceSelector: {} # match all namespaces
+  resourceGroups:
+  - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+    flavors:
+    - name: "default-flavor"
+      resources:
+      - name: "cpu"
+        nominalQuota: 9
+      - name: "memory"
+        nominalQuota: 36Gi
+      - name: "nvidia.com/gpu"
+        nominalQuota: 3
+  admissionChecks:
+  - multikueue-demo2
+  - multikueue-config-demo2
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  namespace: "default"
+  name: "user-queue"
+spec:
+  clusterQueue: "cluster-queue"
+---
+# AdmissionCheck #1: Kueue MultiKueue Controller
+# Dispatches jobs to spoke clusters listed in the MultiKueueConfig.
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: AdmissionCheck
+metadata:
+  name: multikueue-demo2
+spec:
+  controllerName: kueue.x-k8s.io/multikueue
+  parameters:
+    apiGroup: kueue.x-k8s.io
+    kind: MultiKueueConfig
+    name: multikueue-config-demo2
+---
+# AdmissionCheck #2: OCM Placement Controller
+# Watches the Placement and dynamically generates the MultiKueueConfig
+# based on PlacementDecision results.
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: AdmissionCheck
+metadata:
+  name: multikueue-config-demo2
+spec:
+  controllerName: open-cluster-management.io/placement
+  parameters:
+    apiGroup: cluster.open-cluster-management.io
+    kind: Placement
+    name: multikueue-config-demo2

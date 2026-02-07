@@ -1,0 +1,45 @@
+# ==============================================================================
+# Step 4: Submit a Sample GPU Job
+# ==============================================================================
+# Submits to user-queue which routes to GPU clusters via label-based Placement.
+#
+# Key points:
+#   - suspend: true    -- REQUIRED. Kueue manages the lifecycle; it unsuspends
+#                         the job when resources are available on a spoke cluster.
+#   - queue-name label -- Must match the LocalQueue name on the hub (user-queue).
+#   - nvidia.com/gpu   -- Requests 1 GPU, ensuring the job can only run on a
+#                         cluster with GPU resources.
+#   - generateName     -- Creates a unique name each time. Use "oc create", not
+#                         "oc apply".
+#   - 600s sleep       -- Long-running so you have time to observe the workload.
+#
+# Usage:
+#   oc create -f 04-sample-gpu-job.yaml
+# ==============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: demo2-job
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: "user-queue"
+spec:
+  parallelism: 1
+  completions: 1
+  suspend: true
+  template:
+    spec:
+      containers:
+      - name: gpu-worker
+        image: gcr.io/k8s-staging-perf-tests/sleep:v0.1.0
+        args: ["600s"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: "200Mi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "1"
+            memory: "200Mi"
+            nvidia.com/gpu: "1"
+      restartPolicy: Never
