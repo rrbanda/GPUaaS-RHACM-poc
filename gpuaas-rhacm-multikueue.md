@@ -23,7 +23,7 @@ This Proof of Concept demonstrates **GPU-as-a-Service** across a fleet of OpenSh
 - **Dynamic adaptation:** Adding or removing GPU labels on clusters automatically updates the routing configuration. No manual MultiKueueConfig editing is required.
 - **Clear separation of concerns:** Platform administrators manage Placements and labels. Data scientists submit to a queue. Everything else is automated.
 
-> **Support Status:** The Kueue Addon for RHACM premiered as **Developer Preview in RHACM 2.15**. Please review the [Scope of Support for Developer Preview](https://access.redhat.com/support/offerings/devpreview) and check with Red Hat for the most recent support offering before using in production.
+> **Support Status:** The Kueue Addon for RHACM premiered as **Developer Preview in RHACM 2.15**. Please review the Scope of Support for Developer Preview and check with Red Hat for the most recent support offering before using in production.
 
 ---
 
@@ -57,7 +57,7 @@ The core scenario demonstrated is **Label-Based Multi-Cluster GPU Scheduling**: 
 
 ### Personas Involved
 
-This PoC addresses two distinct personas, aligned with the [Red Hat Build of Kueue persona model](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue):
+This PoC addresses two distinct personas, aligned with the Red Hat Build of Kueue persona model:
 
 | Persona | Kueue Role | PoC Responsibility |
 |---------|------------|-------------------|
@@ -111,7 +111,7 @@ Kueue excels at scheduling batch workloads within a single cluster. However, in 
 
 **The Limits of Single-Cluster Kueue:**
 
-![The limits of single cluster Kueue](images/04-pain-points-single-cluster.png)
+![The limits of single cluster Kueue](04-pain-points-single-cluster.png)
 
 *Figure: Without MultiKueue, data scientists are left hunting for GPUs across fragmented clusters, while platform admins struggle with under-utilized resources.*
 
@@ -257,13 +257,13 @@ The GPU-as-a-Service solution is built on three integrated components:
 
 **The Kueue Addon — 4 Steps to GPU-as-a-Service:**
 
-![Kueue Addon 4 Steps](images/03-architecture-5step.png)
+![Kueue Addon 4 Steps](03-architecture-5step.png)
 
 *Figure: (1) RHBoK is available via Operator Hub, (2) RHACM distributes and installs the RHBoK operator to managed clusters via an add-on, (3) The add-on automates deployment and configuration of MultiKueue, (4) The add-on installs two Admission Check Controllers.*
 
 ### What, Why, How
 
-![What Why How](images/01-what-why-how.png)
+![What Why How](01-what-why-how.png)
 
 *Figure: Kueue is a Kubernetes-native job scheduler (WHAT), it optimizes for batch/AI workloads with quotas, bursting, and multi-cluster support (WHY), and RHACM installs, configures, and integrates MultiKueue with Placement across clusters (HOW).*
 
@@ -290,19 +290,19 @@ This check is controlled by `kueue.x-k8s.io/multikueue`. It reads the MultiKueue
 
 **Placement Flow — 3 Steps:**
 
-![Placement Flow](images/02-placement-flow-3step.png)
+![Placement Flow](02-placement-flow-3step.png)
 
 *Figure: (1) Admin creates Placement, (2) RHACM generates MultiKueueConfig from Placement decisions, (3) Jobs are dispatched to managed clusters via MultiKueue.*
 
 **Detailed Architecture — Full Component View:**
 
-![Full Architecture](images/11-full-architecture.png)
+![Full Architecture](11-full-architecture.png)
 
 *Figure: Complete GPU-as-a-Service architecture showing RHACM Hub with Placements (GPU, CPU, GoldClass), Admission Check Controllers, LocalQueues/ClusterQueues, and managed clusters with different hardware types.*
 
 **Multi-Placement Setup — Different Queues for Different Needs:**
 
-![Multi-Placement Setup](images/06-multi-placement-setup.png)
+![Multi-Placement Setup](06-multi-placement-setup.png)
 
 *Figure: Multiple Placements route workloads to the right clusters — BluePlacement for standard GPU jobs, RedPlacement for priority jobs. The RHACM Admission Check Controller creates Kueue workload dispatching from each Placement.*
 
@@ -361,23 +361,23 @@ The following diagrams show the progressive build-up of the GPU-as-a-Service arc
 
 **Step 1: Starting State — Hub cluster manages spoke clusters:**
 
-![Starting State](images/07-starting-state.png)
+![Starting State](07-starting-state.png)
 
 **Step 2: Install the Kueue Addon — Addon deploys controllers to hub:**
 
-![Addon Controllers](images/08-addon-controllers.png)
+![Addon Controllers](08-addon-controllers.png)
 
 **Step 3: Create Placements — Define cluster selection criteria:**
 
-![Placements Added](images/09-placements-added.png)
+![Placements Added](09-placements-added.png)
 
 **Step 4: Queues Created — Admission Check Controller generates MultiKueue resources:**
 
-![Queues Created](images/10-queues-created.png)
+![Queues Created](10-queues-created.png)
 
 **Step 5: Data Scientists Submit Jobs — Workloads dispatched to the right clusters:**
 
-![Full Architecture](images/11-full-architecture.png)
+![Full Architecture](11-full-architecture.png)
 
 **Detailed 5-Step Workflow Summary:**
 
@@ -632,7 +632,7 @@ oc get kueue cluster -ojson | jq '.status.conditions[] | select(.type=="Availabl
 
 Expected: `"status": "True"`, `"reason": "AllReplicasReady"`.
 
-> **Tip:** The `integrations.frameworks` field controls which workload types Kueue manages. `BatchJob` is the default. Add `PyTorchJob`, `RayJob`, `RayCluster`, `Deployment`, `StatefulSet`, or `TrainJob` if your teams use those workload types. See the [Red Hat Build of Kueue documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue) for the full list.
+> **Tip:** The `integrations.frameworks` field controls which workload types Kueue manages. `BatchJob` is the default. Add `PyTorchJob`, `RayJob`, `RayCluster`, `Deployment`, `StatefulSet`, or `TrainJob` if your teams use those workload types. See the Red Hat Build of Kueue documentation for the full list.
 
 #### If the Kueue Addon Is Not Installed
 
@@ -652,7 +652,7 @@ EOF
 
 Wait for the addon to deploy and verify MultiKueueCluster connectivity (step 6 above).
 
-> **Note:** The Kueue Addon automatically installs the Kueue Operator on all managed clusters and creates `MultiKueueCluster` resources on the hub. See the [Kueue Addon repository](https://github.com/open-cluster-management-io/addon-contrib/tree/main/kueue-addon) for detailed installation options.
+> **Note:** The Kueue Addon automatically installs the Kueue Operator on all managed clusters and creates `MultiKueueCluster` resources on the hub. See the Kueue Addon repository for detailed installation options.
 
 ---
 
@@ -715,7 +715,7 @@ cluster3   true           https://cluster3-control-plane:6443   True     True   
 
 > **Tip:** If your managed clusters have real GPUs (e.g., NVIDIA L4, A100, H100), label them with the appropriate accelerator type and update the Placement to match. The pattern is identical.
 
-> **Alternative: ClusterClaims.** Instead of manually labeling clusters, you can use [ClusterClaims](https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/) to have managed clusters automatically report their hardware capabilities. ClusterClaims are custom attributes that a managed cluster advertises to the hub. The Placement can then select clusters using `claimSelector` instead of `labelSelector`. This approach is more scalable for large fleets where manual labeling is impractical.
+> **Alternative: ClusterClaims.** Instead of manually labeling clusters, you can use ClusterClaims to have managed clusters automatically report their hardware capabilities. ClusterClaims are custom attributes that a managed cluster advertises to the hub. The Placement can then select clusters using `claimSelector` instead of `labelSelector`. This approach is more scalable for large fleets where manual labeling is impractical.
 
 ---
 
@@ -760,7 +760,7 @@ Expected output:
 
 ### Step 3: Label the Job Namespace
 
-Label the namespace where jobs will be submitted so that Red Hat Build of Kueue manages workloads in that namespace. This step is required per the [Red Hat Build of Kueue documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue).
+Label the namespace where jobs will be submitted so that Red Hat Build of Kueue manages workloads in that namespace. This step is required per the Red Hat Build of Kueue documentation.
 
 ```bash
 oc label namespace default kueue.openshift.io/managed=true
@@ -1425,7 +1425,7 @@ This PoC demonstrates **label-based** cluster selection — the foundational cap
 
 **Problem:** Multiple GPU clusters exist, but some are heavily utilized while others are idle. You want to route jobs to the cluster with the **most available GPUs**.
 
-**Solution:** Deploy the [resource-usage-collect-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon) to report GPU availability scores via `AddonPlacementScore`. Install it via Helm:
+**Solution:** Deploy the resource-usage-collect-addon to report GPU availability scores via `AddonPlacementScore`. Install it via Helm:
 
 ```bash
 # Add the OCM Helm repository
@@ -1464,7 +1464,7 @@ spec:
 
 This ensures workloads always go to the cluster with the most available GPUs.
 
-Reference: [OCM Scenario 3: Dynamic Score-Based MultiKueue Setup](https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check#scenario-3-dynamic-score-based-multikueue-setup)
+Reference: OCM Scenario 3 — Dynamic Score-Based MultiKueue Setup (see Reference Links)
 
 ### Extension 2: CEL-Based Bin-Packing
 
@@ -1546,7 +1546,7 @@ spec:
 | `borrowWithinCohort: Never` | A team cannot preempt other teams' workloads to borrow beyond its quota |
 | `withinClusterQueue: LowerOrNewerEqualPriority` | Within the same team, lower-priority or newer equal-priority jobs can be preempted |
 
-Reference: [Kueue Multi-Team Resource Management Workshop](https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue)
+Reference: Kueue Multi-Team Resource Management Workshop (see Reference Links)
 
 ### Extension 5: Fair Sharing with Preemption Strategies
 
@@ -1656,7 +1656,7 @@ Kueue will then schedule multi-GPU workloads on topologically adjacent resources
 
 **Solution:** AI platforms that include Kueue for single-cluster scheduling can be extended with RHACM + MultiKueue, so that jobs submitted from notebooks or pipelines are transparently routed to the best cluster across the fleet.
 
-![Entry Point](images/12-entry-point.png)
+![Entry Point](12-entry-point.png)
 
 *Figure: With an AI platform as the consumer, additional capabilities become available: self-service automation, self-service Kueue creation, observability integration, persona/RBAC integration, and GitOps.*
 
@@ -1666,20 +1666,20 @@ Kueue will then schedule multi-GPU workloads on topologically adjacent resources
 
 | Resource | URL |
 |----------|-----|
-| **Red Hat Build of Kueue (OCP 4.18)** | [https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue) |
-| **RHACM Documentation** | [https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) |
-| **OCM Kueue Integration Solution** | [https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check](https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check) |
-| **Kueue Addon Repository** | [https://github.com/open-cluster-management-io/addon-contrib/tree/main/kueue-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/kueue-addon) |
-| **MultiKueue Upstream Documentation** | [https://kueue.sigs.k8s.io/docs/concepts/multikueue/](https://kueue.sigs.k8s.io/docs/concepts/multikueue/) |
-| **OCM Placement Documentation** | [https://open-cluster-management.io/docs/concepts/placement/](https://open-cluster-management.io/docs/concepts/placement/) |
-| **Extending Managed Clusters with Custom Attributes** | [https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/](https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/) |
-| **Extend Multicluster Scheduling Capabilities** | [https://open-cluster-management.io/docs/scenarios/extend-multicluster-scheduling-capabilities/](https://open-cluster-management.io/docs/scenarios/extend-multicluster-scheduling-capabilities/) |
-| **Resource Usage Collect Addon** | [https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon](https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon) |
-| **RHACM + Kueue Blog (Part 1: Installation)** | [https://open-cluster-management.io/blog/2025/07/17/kueue-addon-part1/](https://open-cluster-management.io/blog/2025/07/17/kueue-addon-part1/) |
-| **RHACM + Kueue Blog (Part 2: Advanced Scheduling)** | [https://open-cluster-management.io/blog/2025/09/10/kueue-addon-part2/](https://open-cluster-management.io/blog/2025/09/10/kueue-addon-part2/) |
-| **Kueue Multi-Team Workshop** | [https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue](https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue) |
-| **Developer Preview Scope of Support** | [https://access.redhat.com/support/offerings/devpreview](https://access.redhat.com/support/offerings/devpreview) |
-| **Open Cluster Management** | [https://open-cluster-management.io/](https://open-cluster-management.io/) |
+| **Red Hat Build of Kueue (OCP 4.18)** | https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/ai_workloads/red-hat-build-of-kueue |
+| **RHACM Documentation** | https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes |
+| **OCM Kueue Integration Solution** | https://github.com/open-cluster-management-io/ocm/tree/main/solutions/kueue-admission-check |
+| **Kueue Addon Repository** | https://github.com/open-cluster-management-io/addon-contrib/tree/main/kueue-addon |
+| **MultiKueue Upstream Documentation** | https://kueue.sigs.k8s.io/docs/concepts/multikueue/ |
+| **OCM Placement Documentation** | https://open-cluster-management.io/docs/concepts/placement/ |
+| **Extending Managed Clusters with Custom Attributes** | https://open-cluster-management.io/docs/scenarios/extending-managed-clusters/ |
+| **Extend Multicluster Scheduling Capabilities** | https://open-cluster-management.io/docs/scenarios/extend-multicluster-scheduling-capabilities/ |
+| **Resource Usage Collect Addon** | https://github.com/open-cluster-management-io/addon-contrib/tree/main/resource-usage-collect-addon |
+| **RHACM + Kueue Blog (Part 1: Installation)** | https://open-cluster-management.io/blog/2025/07/17/kueue-addon-part1/ |
+| **RHACM + Kueue Blog (Part 2: Advanced Scheduling)** | https://open-cluster-management.io/blog/2025/09/10/kueue-addon-part2/ |
+| **Kueue Multi-Team Workshop** | https://github.com/opendatahub-io/distributed-workloads/tree/main/workshops/kueue |
+| **Developer Preview Scope of Support** | https://access.redhat.com/support/offerings/devpreview |
+| **Open Cluster Management** | https://open-cluster-management.io/ |
 
 ---
 
