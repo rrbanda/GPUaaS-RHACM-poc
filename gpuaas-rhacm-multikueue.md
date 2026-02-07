@@ -27,14 +27,14 @@
     images/03-architecture-5step.png
     images/03b-architecture-use-case.png
     images/04-pain-points-single-cluster.png
-    images/05-multi-queue-rhoai.png
+    images/05-multi-queue.png
     images/06-multi-placement-setup.png
     images/07-starting-state.png
     images/08-addon-controllers.png
     images/09-placements-added.png
     images/10-queues-created.png
-    images/11-full-architecture-rhoai.png
-    images/12-rhoai-entry-point.png
+    images/11-full-architecture.png
+    images/12-entry-point.png
 =============================================================================
 -->
 
@@ -189,9 +189,9 @@ The OCM controller is the **bridge** between RHACM Placement and Kueue MultiKueu
 
 **Detailed Architecture — Full Component View:**
 
-![Full Architecture](images/11-full-architecture-rhoai.png)
+![Full Architecture](images/11-full-architecture.png)
 
-*Figure: Complete GPU-as-a-Service architecture showing RHACM Hub with Placements (GPU, CPU, GoldClass), Admission Check Controllers, LocalQueues/ClusterQueues, and managed clusters with different hardware types. Data scientists submit via RHOAI or any entry point.*
+*Figure: Complete GPU-as-a-Service architecture showing RHACM Hub with Placements (GPU, CPU, GoldClass), Admission Check Controllers, LocalQueues/ClusterQueues, and managed clusters with different hardware types.*
 
 **Multi-Placement Setup — Different Queues for Different Needs:**
 
@@ -229,7 +229,7 @@ The power of this architecture is the **clear separation between administration 
 
 | Area | Notes |
 |------|-------|
-| **Red Hat OpenShift AI (RHOAI) integration** | RHOAI is the data scientist's entry point and works with Kueue, but is not configured in this PoC |
+| **AI platform integration** | Integration with data science platforms is not configured in this PoC |
 | **Production workloads** | This PoC uses test images, not real AI training jobs |
 | **Real GPU training** | Fake GPU resources may be used for demonstration |
 | **Dynamic score-based scheduling** | Covered as a future extension (see [Section 12](#12-future-extensions-beyond-this-poc)) |
@@ -367,7 +367,7 @@ The following diagrams show the progressive build-up of the GPU-as-a-Service arc
 
 **Step 5: Data Scientists Submit Jobs — Workloads dispatched to the right clusters:**
 
-![Full Architecture with RHOAI Entry Points](images/11-full-architecture-rhoai.png)
+![Full Architecture](images/11-full-architecture.png)
 
 **Detailed 5-Step Workflow Summary:**
 
@@ -1064,15 +1064,15 @@ spec:
 | `cpu-queue` | CPUPlacement | Clusters with `cluster-type=cpu-only` | ETL, preprocessing |
 | `gold-gpu-queue` | GoldGPUPlacement | Premium A100/H100 clusters | Critical/priority jobs |
 
-### Extension 4: RHOAI Integration
+### Extension 4: AI Platform Integration
 
 **Problem:** Data scientists want to use their familiar tools (Jupyter, pipelines) rather than raw `oc create` commands.
 
-**Solution:** Red Hat OpenShift AI already includes Kueue for single-cluster scheduling. With RHACM + MultiKueue, jobs submitted from RHOAI notebooks or pipelines are transparently routed to the best cluster across the fleet.
+**Solution:** AI platforms that include Kueue for single-cluster scheduling can be extended with RHACM + MultiKueue, so that jobs submitted from notebooks or pipelines are transparently routed to the best cluster across the fleet.
 
-![RHOAI Entry Point](images/12-rhoai-entry-point.png)
+![Entry Point](images/12-entry-point.png)
 
-*Figure: With RHOAI as the consumer, additional capabilities become available: self-service automation, self-service Kueue creation, observability integration, persona/RBAC integration, AAP integration, and GitOps.*
+*Figure: With an AI platform as the consumer, additional capabilities become available: self-service automation, self-service Kueue creation, observability integration, persona/RBAC integration, and GitOps.*
 
 ---
 

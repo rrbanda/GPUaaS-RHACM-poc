@@ -24,20 +24,11 @@ This repository contains a **Proof of Concept (PoC)** for delivering GPU-as-a-Se
 │   ├── 02-placement-flow-3step.png
 │   ├── 03-architecture-5step.png
 │   ├── ...                       # 13 total architecture diagrams
-│   └── 12-rhoai-entry-point.png
+│   └── 12-entry-point.png
 ├── LICENSE
 └── README.md
 ```
 
-## Confluence Import
-
-The PoC document is formatted for easy import into Atlassian Confluence. See the instructions at the top of `gpuaas-rhacm-multikueue.md` for three options:
-
-1. **Direct Paste** — Use Confluence's Markdown block
-2. **Markdown Import Macro** — Use the Atlassian Marketplace macro
-3. **Manual Copy** — Copy sections individually into the rich text editor
-
-Upload all images from the `images/` folder as Confluence attachments.
 
 ## Quick Start
 
